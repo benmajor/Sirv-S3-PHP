@@ -1,0 +1,21 @@
+{
+    "name": "benmajor/sirvs3-client",
+    "type": "library",
+    "description": "A simple PHP client for the Sirv S3 service.",
+    "keywords": [ "sirv", "sirvs3" , "s3", "cdn" ],
+    "license": "MIT",
+    "require": {
+        "php": ">= 5.6.0"
+    },
+    "authors": [
+        {
+            "name": "Ben Major",
+            "email": "ben.major88@gmai;.com",
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "BenMajor\\SirvPHP\\": "src/"
+        }
+    }
+}
