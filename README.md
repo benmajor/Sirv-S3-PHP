@@ -9,7 +9,7 @@ This library is a Sirv S3 Client written in PHP. It is a port of the official SD
 The easiest way to install the client is using [Composer](https://www.getcomposer.com/):
 
 ```
-$ composer require benmajor/sirv-php
+$ composer require benmajor/sirv-s3-client
 ```
 
 Since there are no external dependencies (other than PHP >= `5.4` and with the cURL module installed), you can also download the single PHP class from the `src` directory and include it in your code using PHP's `require` statement:
