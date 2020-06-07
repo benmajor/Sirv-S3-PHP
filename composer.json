@@ -1,5 +1,5 @@
 {
-    "name": "benmajor/sirvs3-client",
+    "name": "benmajor/sirv-s3-client",
     "type": "library",
     "description": "A simple PHP client for the Sirv S3 service.",
     "keywords": [ "sirv", "sirvs3" , "s3", "cdn" ],
