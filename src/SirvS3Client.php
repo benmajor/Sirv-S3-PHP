@@ -4,18 +4,17 @@ namespace BenMajor\SirvPHP;
 
 class SirvS3Client
 {
-	const HOST = 'http://s3.sirv.com';
+	private $host = 's3.sirv.com';
+    private $bucket = '';
+    private $aws_key = '';
+    private $aws_secret_key = '';
 
-	private $bucket;
-	private $key;
-	private $secret;
-	private $date;
+    private $client = false;
+    private $connectionChecked = false;
+    private $date;
+    private $curlInfo;
 
-	private $client = false;
-	private $connectionChecked = false;
-	private $curlInfo;
-
-	private $mimeTypes = [
+    private $mimeTypes = [
         "323" => "text/h323",
         "acx" => "application/internet-property-stream",
         "ai" => "application/postscript",
@@ -205,108 +204,109 @@ class SirvS3Client
         "zip" => "application/zip"
     ];
 
-	function __construct( string $bucket, string $key, string $secret )
-	{
-		$this->bucket = $bucket;
-        $this->key = $key;
-        $this->secret = $secret;
-        $this->date = gmdate('D, d M Y H:i:s T');
-	}
+    public function __construct( string $bucket, string $aws_key, string $aws_secret_key )
+    {
+        $this->bucket = $bucket;
+        $this->aws_key = $aws_key;
+        $this->aws_secret_key = $aws_secret_key;
+        $this->date   = gmdate('D, d M Y H:i:s T');
+    }
 
-	public function getObjectsList(string $folder)
+    public function getObjectsList( string $folder )
     {
         $buckets = [ ];
-
-        $request = [
-        	'verb' => 'GET', 
-        	'resource' => $folder
-       	];
+        
+        $request = [ 
+            'verb' => 'GET', 
+            'resource' => $folder 
+        ];
 
         $result = $this->sendRequest($request);
-
         $xml = simplexml_load_string($result);
 
-        if( $xml !== false && isset($xml->Buckets->Bucket) ) {
-            foreach( $xml->Buckets->Bucket as $bucket ) {
-                $buckets[] = (string) $bucket->Name;
+        if ($xml !== false && isset($xml->Buckets->Bucket)) {
+            foreach ($xml->Buckets->Bucket as $bucket) {
+                $buckets[] = (string)$bucket->Name;
             }
         }
-
         return $buckets;
     }
 
-    public function getBucketContents( string $prefix = null, string $marker = null, string $delimeter = null, string $max_keys = null )
+    public function getBucketContents($prefix = null, $marker = null, $delimeter = null, $max_keys = null)
     {
         $dirs = [ ];
         $contents = [ ];
-
         $bucket = $this->bucket;
 
         do
         {
             $q = [ ];
 
-            if( !is_null($prefix) ) {
-            	$q['prefix'] = $prefix;
+            if(!is_null($prefix)) {
+                $q[] = 'prefix=' . $prefix;
             }
 
-            if( !is_null($marker) ) {
-            	$q['marker'] = $marker;
+            if(!is_null($marker)) {
+                $q[] = 'marker=' . $marker;
             }
 
-            if( !is_null($delimeter) ) {
-            	$q['delimeter'] = $delimeter;
+            if(!is_null($delimeter)) {
+                $q[] = 'delimeter=' . $delimeter;
             }
 
-            if( !is_null($max_keys) ) {
-            	$q['max-keys'] = $max_keys;
+            if(!is_null($max_keys)) {
+                $q[] = 'max-keys=' . $max_keys;
             }
 
-            $qsa = '?'.http_build_query($q);
+            $q = implode('&', $q);
 
-            $xml = simplexml_load_string(
-            	$this->sendRequest([
-            		'verb' => 'GET',
-            		'resource' => '/'.$bucket.'/'.$qsa
-            	])
-            );
+            if(strlen($q) > 0) {
+                $q = '?' . $q;
+            }
+
+            $request = [
+                'verb' => 'GET', 
+                'resource' => "/$bucket/$q"
+            ];
+
+            $result = $this->sendRequest($request);
+            $xml = simplexml_load_string($result);
 
             if($xml === false) {
                 return false;
             }
 
-
             foreach ($xml->CommonPrefixes as $prefixItem) {
-                $dirs[] = [ 'Prefix' => (string) $prefixItem->Prefix ];
+                $dirs[] = array('Prefix' => (string) $prefixItem->Prefix);
             }
 
             foreach($xml->Contents as $item) {
                 $contents[] = [
-                	'Key' => (string) $item->Key, 
-                	'LastModified' => (string) $item->LastModified, 
-                	'ETag' => (string) $item->ETag, 
-                	'Size' => (string) $item->Size)
-				];
+                    'Key' => (string) $item->Key, 
+                    'LastModified' => (string) $item->LastModified, 
+                    'ETag' => (string) $item->ETag, 
+                    'Size' => (string) $item->Size
+                ];
             }
 
             $marker = (string) $xml->Marker;
         }
-        while( (string) $xml->IsTruncated == 'true' && is_null($max_keys) );
+        while((string) $xml->IsTruncated == 'true' && is_null($max_keys));
 
-        return [
-        	'bucket' => $bucket,
-        	'current_dir' => urldecode($prefix), 
-        	'contents' => $contents,
-        	'dirs' => $dirs
+        return (object) [
+            'bucket' => $bucket,
+            'current_dir' => urldecode($prefix), 
+            'contents' => $contents, 
+            'dirs' => $dirs
         ];
     }
 
-    public function checkIfObjectExists( string $folderPath, string $fileName = '')
+    public function checkIfObjectExists($folderPath, $fileName = '')
     {
         $objects = $this->getBucketContents($folderPath);
 
-        if( !empty($objects['contents']) ) {
-            foreach( $objects['contents'] as $object ) {
+        if( ! empty($objects->contents) ) {
+            foreach ($objects->contents as $object) {
                 if( $object['Key'] === $folderPath.((!empty($fileName))?'/'.$fileName:'') ) {
                     return true;
                 }
@@ -314,36 +314,49 @@ class SirvS3Client
         }
 
         return false;
-    }
+    }    
+
 
     public function createFolder($folderPath)
     {
         $url = $this->uploadFile(
-        	$folderPath.'/tmpsirvfile', 
-        	tempnam(sys_get_temp_dir(), 'tmpsirvfile')
+            $folderPath.'/tmpsirvfile', 
+            tempnam(sys_get_temp_dir(), 'tmpsirvfile')
         );
 
-        if( $url['sirv_path'] != '' ) {
-            return $this->deleteFile( $url['sirv_path'] );
+        if( isset($url->sirv_path) && !empty($url->sirv_path) ) {
+            $this->deleteFile( $url->sirv_path );
+            return true;
         }
 
         return false;
     }
 
-    public function uploadFile( string $path, string $fs_path, bool $web_accessible = false, array $headers = [ ])
+    public function uploadFile($sirv_path, $fs_path, $web_accessible = false, $headers = null)
     {
-    	$request = [
-    		'verb' => 'PUT',
-    		'bucket' => $this->bucket,
-    		'resource' => '/'.ltrim($path, '/'),
-    		'content-md5' => $this->base64(md5_file($fs_path))
-    	];
+        $request = [
+            'verb' => 'PUT',
+            'bucket' => $this->bucket,
+            'resource' => "/$sirv_path",
+            'content-md5' => $this->base64(md5_file($fs_path))
+        ];
 
         $fh = fopen($fs_path, 'r');
 
+        $curl_opts = [
+            'CURLOPT_PUT' => true,
+            'CURLOPT_INFILE' => $fh,
+            'CURLOPT_INFILESIZE' => filesize($fs_path),
+            'CURLOPT_CUSTOMREQUEST' => 'PUT'
+        ];
+
+        if(is_null($headers)) {
+            $headers = array();
+        }
+
         $headers['Content-MD5'] = $request['content-md5'];
 
-        if( $web_accessible === true && !isset($headers['x-amz-acl']) ) {
+        if($web_accessible === true && !isset($headers['x-amz-acl'])) {
             $headers['x-amz-acl'] = 'public-read';
         }
 
@@ -354,88 +367,93 @@ class SirvS3Client
 
         $request['content-type'] = $headers['Content-Type'];
 
-        $result = $this->sendRequest($request, $headers, [
-        	'CURLOPT_PUT' => true,
-        	'CURLOPT_INFILE' => $fh,
-        	'CURLOPT_INFILESIZE' => filesize($fs_path),
-        	'CURLOPT_CUSTOMREQUEST' => 'PUT'
-        ]);
+        $result = $this->sendRequest($request, $headers, $curl_opts);
 
         fclose($fh);
 
-        $isFileUploaded = $this->curlInfo['http_code'] == 200;
+        $isFileUploaded = $this->curlInfo['http_code'] == '200';
 
         $full_url = $isFileUploaded ? 'https://' . $this->bucket . '.sirv.com/' . $sirv_path : '';
         $sirv_url = $isFileUploaded ? $sirv_path : '';
 
-        if( $full_url == '' ) {
-            return [ ];  
+        if($full_url == '') {
+            return (object) [ ];  
+        } else {
+            return (object) [
+                'full_url' => $full_url, 
+                'sirv_path' => $sirv_path
+            ];
         }
-           
-        return [
-        	'full_url' => $full_url, 
-        	'sirv_path' => $sirv_path
-		];
     }
 
-    public function copyFile( string $sirv_path, string $sirv_path_copy, bool $web_accessible = false, array $headers = [ ])
+    public function copyFile($sirv_path, $sirv_path_copy, $web_accessible = false, $headers = null)
     {
         $request = [
-        	'verb' => 'PUT',
-        	'bucket' => $this->bucket,
-        	'resource' => '/'.ltrim($sirv_path_copy, '/')
+            'verb' => 'PUT',
+            'bucket' => $this->bucket,
+            'resource' => "/$sirv_path_copy"
         ];
+
+        $curl_opts = [
+            'CURLOPT_PUT' => true,
+            'CURLOPT_CUSTOMREQUEST' => 'PUT'
+        ];
+
+        if( is_null($headers) ) {
+            $headers = array();
+        }
 
         $headers['x-amz-acl'] = 'ACL';
         $headers['x-amz-copy-source'] = $this->bucket.'/'.$sirv_path;
 
-        $result = $this->sendRequest($request, $headers, [
-        	'CURLOPT_PUT' => true,
-        	'CURLOPT_CUSTOMREQUEST' => 'PUT'
-        ]);
+        $result = $this->sendRequest($request, $headers, $curl_opts);
 
-        return ($this->curlInfo['http_code'] == 200);
+        return $this->curlInfo['http_code'] == 200;
     }
 
-    public function renameFile( string $sirv_path, string $sirv_path_copy)
+    public function renameFile($sirv_path, $sirv_path_copy)
     {
-        return (
-        	$this->copyFile($sirv_path, $sirv_path_copy) && $this->deleteFile($sirv_path)
-        );
+        return $this->copyFile($sirv_path, $sirv_path_copy) && $this->deleteFile($sirv_path);
     }
 
-    public function deleteFile( string $file )
+    public function deleteFile($file)
     {
-        $this->sendRequest([
-        	'verb' => 'DELETE', 
-        	'bucket' => $this->bucket, 
-        	'resource' => '/'.ltrim($file, '/')
-        ]);
+        $request = [
+            'verb' => 'DELETE', 
+            'bucket' => $this->bucket, 
+            'resource' => "/$file"
+        ];
+
+        $this->sendRequest($request);
+
+        print_r($this->curlInfo);
 
         return $this->curlInfo['http_code'] == 204;
     }
-
-    public function getFile( string $file )
-    {
-        $res = $this->sendRequest([
-        	'verb' => 'GET',
-        	'bucket' => $this->bucket,
-        	'resource' => '/'.ltrim($file, '/')
-        ]);
-
-        return ($this->curlInfo['http_code'] == 200) ? $res : null;
-    }
     
+
+    public function getFile($file)
+    {
+        $request = [
+            'verb' => 'GET', 
+            'bucket' => $this->bucket, 
+            'resource' => "/$file"
+        ];
+
+        $res = $this->sendRequest($request);
+
+        return ($this->curlInfo['http_code'] == 200) ? $res : '';
+    }
+
     public function testConnection()
     {
-        if( $this->connectionChecked ) {
+        if ($this->connectionChecked) {
             return true;
         }
 
         try {
             $objs = $this->getObjectsList('/');
-        } 
-        catch (Exception $e) {
+        } catch (Exception $e) {
             $this->connectionChecked = false;
             return false;
         }
@@ -443,12 +461,15 @@ class SirvS3Client
         return $this->connectionChecked = is_array($objs) && !empty($objs);
     }
 
-    private function sendRequest( $request, array $headers = [ ], $curl_opts = null )
+    private function sendRequest($request, $headers = null, $curl_opts = null)
     {
-        $headers['Date'] = $this->date;
-        $headers['Authorization'] = 'AWS '.$this->key.':'.$this->signature($request, $headers);
+        if (is_null($headers)) {
+            $headers = [ ];
+        }
 
-        foreach( $headers as $k => $v ) {
+        $headers['Date'] = $this->date;
+        $headers['Authorization'] = 'AWS '.$this->aws_key.':'.$this->signature($request, $headers);
+        foreach ($headers as $k => $v) {
             $headers[$k] = "$k: $v";
         }
 
@@ -456,13 +477,12 @@ class SirvS3Client
 
         $uri = 'http://'.$host.$request['resource'];
         $ch = curl_init();
-
         curl_setopt($ch, CURLOPT_URL, $uri);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $request['verb']);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 
-        if( is_array($curl_opts) ) {
+        if (is_array($curl_opts)) {
             foreach ($curl_opts as $k => $v) {
                 curl_setopt($ch, constant($k), $v);
             }
@@ -471,75 +491,79 @@ class SirvS3Client
         $result = curl_exec($ch);
         $this->curlInfo = curl_getinfo($ch);
 
+        # Add the body:
+        $this->curlInfo['body'] = $result;
+
         curl_close($ch);
 
         return $result;
     }
 
-    private function signature($request, array $headers = [ ])
+    private function signature($request, $headers = null)
     {
-        $CanonicalizedAmzHeadersArr = [ ];
-        $CanonicalizedAmzHeadersStr = '';
+        if (is_null($headers)) {
+            $headers = array();
+        }
 
-        foreach( $headers as $k => $v ) {
+        $CanonicalizedAmzHeadersArr = array();
+        $CanonicalizedAmzHeadersStr = '';
+        foreach ($headers as $k => $v) {
             $k = strtolower($k);
 
-            if( substr($k, 0, 5) != 'x-amz' ) {
+            if (substr($k, 0, 5) != 'x-amz') {
                 continue;
             }
 
-            if( isset($CanonicalizedAmzHeadersArr[$k]) ) {
+            if (isset($CanonicalizedAmzHeadersArr[$k])) {
                 $CanonicalizedAmzHeadersArr[$k] .= ','.trim($v);
             } else {
                 $CanonicalizedAmzHeadersArr[$k] = trim($v);
             }
         }
-
         ksort($CanonicalizedAmzHeadersArr);
 
-        foreach( $CanonicalizedAmzHeadersArr as $k => $v ) {
+        foreach ($CanonicalizedAmzHeadersArr as $k => $v) {
             $CanonicalizedAmzHeadersStr .= "$k:$v\n";
         }
 
-        if( isset($request['bucket']) ) {
+        if (isset($request['bucket'])) {
             $request['resource'] = '/'.$request['bucket'].$request['resource'];
         }
 
-        $str = $request['verb']."\n";
-        $str.= isset($request['content-md5']) ? $request['content-md5']."\n" : "\n";
-        $str.= isset($request['content-type']) ? $request['content-type']."\n" : "\n";
-        $str.= isset($request['date']) ? $request['date']."\n" : $this->date."\n";
-        $str.= $CanonicalizedAmzHeadersStr.preg_replace('#\?(?!delete$).*$#is', '', $request['resource']);
+        $str  = $request['verb']."\n";
+        $str .= isset($request['content-md5']) ? $request['content-md5']."\n" : "\n";
+        $str .= isset($request['content-type']) ? $request['content-type']."\n" : "\n";
+        $str .= isset($request['date']) ? $request['date']."\n" : $this->date."\n";
+        $str .= $CanonicalizedAmzHeadersStr.preg_replace('#\?(?!delete$).*$#is', '', $request['resource']);
 
         $sha1 = $this->hasher($str);
-
         return $this->base64($sha1);
     }
 
-    private function hasher($data)
+    private function hasher( $data )
     {
-        $key = $this->secret;
+        $key = $this->aws_secret_key;
 
-        if( strlen($key) > 64 ) {
+        if (strlen($key) > 64) {
             $key = pack('H40', sha1($key));
         }
-
-        if( strlen($key) < 64 ) {
+        
+        if (strlen($key) < 64) {
             $key = str_pad($key, 64, chr(0));
         }
 
         $ipad = (substr($key, 0, 64) ^ str_repeat(chr(0x36), 64));
         $opad = (substr($key, 0, 64) ^ str_repeat(chr(0x5C), 64));
 
-        return sha1( $opad.pack('H40', sha1($ipad.$data)) );
+        return sha1($opad.pack('H40', sha1($ipad.$data)));
     }
 
-    private function base64($str)
+    private function base64( $str )
     {
         $ret = '';
 
-        for( $i = 0; $i < strlen($str); $i += 2 ) {
-            $ret.= chr(hexdec(substr($str, $i, 2)));
+        for ($i = 0; $i < strlen($str); $i += 2) {
+            $ret .= chr(hexdec(substr($str, $i, 2)));
         }
 
         return base64_encode($ret);
