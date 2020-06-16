@@ -426,8 +426,6 @@ class SirvS3Client
 
         $this->sendRequest($request);
 
-        print_r($this->curlInfo);
-
         return $this->curlInfo['http_code'] == 204;
     }
     
