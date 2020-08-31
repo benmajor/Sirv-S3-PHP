@@ -289,7 +289,7 @@ class SirvS3Client
                 ];
             }
 
-            $marker = (string) $xml->Marker;
+            $marker = (string) $xml->NextMarker;
         }
         while((string) $xml->IsTruncated == 'true' && is_null($max_keys));
 
